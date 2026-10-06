@@ -66,9 +66,31 @@ class Sqids
   DEFAULT_BLOCKLIST_PATTERNS = blocklist_patterns(DEFAULT_BLOCKLIST)
   DEFAULT_BLOCKLIST_FOUR = DEFAULT_BLOCKLIST.select { |word| word.length == 4 }.to_set.freeze
   DEFAULT_BLOCKLIST_FIVE = DEFAULT_BLOCKLIST.select { |word| word.length == 5 }.to_set.freeze
+  DEFAULT_BLOCKLIST_INDEX_LIMIT = 12
+  # Any long word can match an edge; only digit-free words can match
+  # strictly inside an ID. Keep edge and interior checks disjoint.
+  DEFAULT_BLOCKLIST_EDGES = begin
+    groups = Array.new(DEFAULT_BLOCKLIST_INDEX_LIMIT + 1)
+    groups[4] = DEFAULT_BLOCKLIST_FOUR
+    groups[5] = DEFAULT_BLOCKLIST_FIVE
+    DEFAULT_BLOCKLIST.each do |word|
+      length = word.length
+      next if length <= 5 || length > DEFAULT_BLOCKLIST_INDEX_LIMIT
+
+      (groups[length] ||= Set.new).add(word)
+    end
+    groups.each { |words| words.freeze if words }
+    groups.freeze
+  end
+  DEFAULT_BLOCKLIST_INTERIORS = DEFAULT_BLOCKLIST.select do |word|
+    word.length >= 4 && word.length <= DEFAULT_BLOCKLIST_INDEX_LIMIT - 2 && !word.match?(/\d/)
+  end.group_by(&:length).sort.map do |length, words|
+    [length, words.to_set.freeze].freeze
+  end.freeze
   EMPTY_BLOCKLIST_INDEX = [Set.new.freeze, [].freeze, [].freeze].freeze
   private_constant :DEFAULT_BLOCKLIST_PATTERNS, :DEFAULT_BLOCKLIST_FOUR, :DEFAULT_BLOCKLIST_FIVE,
-                   :EMPTY_BLOCKLIST_INDEX
+                   :DEFAULT_BLOCKLIST_INDEX_LIMIT, :DEFAULT_BLOCKLIST_EDGES,
+                   :DEFAULT_BLOCKLIST_INTERIORS, :EMPTY_BLOCKLIST_INDEX
 
   def initialize(options = {})
     alphabet = options[:alphabet] || DEFAULT_ALPHABET
@@ -251,6 +273,11 @@ class Sqids
 
     id = id.downcase
     length = id.length
+    if length > DEFAULT_BLOCKLIST_INDEX_LIMIT
+      return (prefix && prefix.match?(id)) || (suffix && suffix.match?(id.reverse)) ||
+             (anywhere && anywhere.match?(id))
+    end
+
     return DEFAULT_BLOCKLIST_FOUR.include?(id) if length == 4
 
     # At five characters, every four-character substring is an edge match.
@@ -259,8 +286,35 @@ class Sqids
              DEFAULT_BLOCKLIST_FOUR.include?(id[0, 4]) || DEFAULT_BLOCKLIST_FOUR.include?(id[1, 4])
     end
 
-    (prefix && prefix.match?(id)) || (suffix && suffix.match?(id.reverse)) ||
-      (anywhere && anywhere.match?(id))
+    blocked_by_default_index?(id, length)
+  end
+
+  def blocked_by_default_index?(id, length)
+    whole = DEFAULT_BLOCKLIST_EDGES[length]
+    return true if whole && whole.include?(id)
+
+    word_length = 4
+    while word_length < length
+      words = DEFAULT_BLOCKLIST_EDGES[word_length]
+      if words && (words.include?(id.byteslice(0, word_length)) ||
+                   words.include?(id.byteslice(-word_length, word_length)))
+        return true
+      end
+      word_length += 1
+    end
+
+    DEFAULT_BLOCKLIST_INTERIORS.each do |interior_length, words|
+      break if interior_length > length - 2
+
+      offset = 1
+      limit = length - interior_length - 1
+      while offset <= limit
+        return true if words.include?(id.byteslice(offset, interior_length))
+
+        offset += 1
+      end
+    end
+    false
   end
 
   def blocked_by_index?(id)
