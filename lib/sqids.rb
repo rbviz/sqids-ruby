@@ -64,8 +64,11 @@ class Sqids
   private_class_method :blocklist_index
 
   DEFAULT_BLOCKLIST_PATTERNS = blocklist_patterns(DEFAULT_BLOCKLIST)
+  DEFAULT_BLOCKLIST_FOUR = DEFAULT_BLOCKLIST.select { |word| word.length == 4 }.to_set.freeze
+  DEFAULT_BLOCKLIST_FIVE = DEFAULT_BLOCKLIST.select { |word| word.length == 5 }.to_set.freeze
   EMPTY_BLOCKLIST_INDEX = [Set.new.freeze, [].freeze, [].freeze].freeze
-  private_constant :DEFAULT_BLOCKLIST_PATTERNS, :EMPTY_BLOCKLIST_INDEX
+  private_constant :DEFAULT_BLOCKLIST_PATTERNS, :DEFAULT_BLOCKLIST_FOUR, :DEFAULT_BLOCKLIST_FIVE,
+                   :EMPTY_BLOCKLIST_INDEX
 
   def initialize(options = {})
     alphabet = options[:alphabet] || DEFAULT_ALPHABET
@@ -247,6 +250,15 @@ class Sqids
     return short.include?(id.downcase) if id.length <= 3
 
     id = id.downcase
+    length = id.length
+    return DEFAULT_BLOCKLIST_FOUR.include?(id) if length == 4
+
+    # At five characters, every four-character substring is an edge match.
+    if length == 5
+      return DEFAULT_BLOCKLIST_FIVE.include?(id) ||
+             DEFAULT_BLOCKLIST_FOUR.include?(id[0, 4]) || DEFAULT_BLOCKLIST_FOUR.include?(id[1, 4])
+    end
+
     (prefix && prefix.match?(id)) || (suffix && suffix.match?(id.reverse)) ||
       (anywhere && anywhere.match?(id))
   end
